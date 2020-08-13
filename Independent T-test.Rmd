@@ -1,0 +1,153 @@
+---
+title: "t-test"
+author: "William W. Lage"
+date: "8/12/2020"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import data}
+data <- read.csv("wave4.csv")
+```
+
+```{r library}
+library(jmv) #contains the descriptive statistics, t-test, and histograms
+library(groupdata2)  #for upsampling, or downsampling if you prefer
+library(car) #for independent Levene's test, though this test can also be an argument in Ttest
+library(effsize) #for Cliff's Delta
+```
+
+#prep work and cleaning
+```{r recoding}
+#in the codebook we learned that 996 was refused to answer and 998 was unknown. Since we don't know the value of these, we'll recode them to NA's so they're not included in our statistics
+data$WEIGHT[data$WEIGHT=="996"]<-"NA"
+data$WEIGHT[data$WEIGHT=="998"]<-"NA"
+#entering NA converted the column into a string, so we're going to convert it back to an integer, and R will make the string "NA" into applicable NA's
+data$WEIGHT <- as.integer(data$WEIGHT)
+
+#let's also make SEX into male and female so that they have understandable meaning to us
+data$SEX[data$SEX=="1"]<-"Male"
+data$SEX[data$SEX=="2"]<-"Female"
+
+#let's convert these strings into factor levels
+data$SEX <- as.factor(data$SEX)
+
+#the str function allows you to see the structure of your dataframe and varify the variables are configured correctly
+str(data)
+```
+```{r cleaning}
+#remove the NAs
+data.noNA <- na.omit(data)
+#alternatively, you could impute the values using
+##data$WEIGHT<- round(with(data, impute(WEIGHT)), 0)
+
+#next we need to remove univariate outliers
+##this first function identifies outliers. As we can see individuals having weight >=340lbs or <=22 lbs were not normal for this sample
+data.noNA[abs(scale(data.noNA$WEIGHT)) > 3, ]
+##and this one gets rid of them
+data.nouni <- data.noNA[!abs(scale(data.noNA$WEIGHT)) > 3, ]
+```
+
+```{r descriptives}
+desc <- descriptives(data.nouni, vars = c('WEIGHT'), splitBy = c('SEX'), hist = TRUE, sd = TRUE, se = TRUE, skew = TRUE, kurt = TRUE)
+desc
+```
+```{r making parametric}
+#for the parametric t-test we need to work with data that has an equal representation of each of groups (male/female)
+#one method to deal with this (if you have a large sample) is to randomly drop participants from your larger group to get it down to the number in the smaller group
+down <- downsample(data = data.nouni, cat_col = 'SEX')
+#alternatively, you can randomly sample from the smaller group with replacement to get up to the larger group
+up <- upsample(data = data.nouni, cat_col = 'SEX')
+#there are also mixed methods in the ROSE and DMWR libraries
+```
+
+#cleaned descriptives and t-test
+```{r new descriptives}
+desc2 <- descriptives(down, vars = c('WEIGHT'), splitBy = c('SEX'), hist = TRUE, sd = TRUE, se = TRUE, skew = TRUE, kurt = TRUE)
+desc2
+```
+```{r equality of variance}
+#it's important that the variance be similar for comparison
+leveneTest(down$WEIGHT, down$SEX, center = mean)
+##since p<.05 (Pr>F) we will have to use a Welch's t-test to account for the unequal variance 
+```
+
+```{r paramteric independent t}
+ttestIS(data = down, vars = 'WEIGHT', group = 'SEX', effectSize = TRUE, ci = TRUE, desc = TRUE, welchs = TRUE) 
+#you can make the levene test built in by passing the argument eqv = TRUE into the equation
+```
+
+```{r non-parametric}
+#if we don't want to resample the data, and instead want to keep it's original proportion we can unclude a Mann-Whitney U test for non-parametric data
+ttestIS(data = data.nouni, vars = 'WEIGHT', group = 'SEX', effectSize = TRUE, ci = TRUE, desc = TRUE, mann = TRUE)
+```
+```{r non-para effect size}
+#Since we're looking a non-parametrics anyways, it is importnat to note that the t-test also has a non-paraemtric effect size calculator that accounts for the Likert-style data used in many surveys
+cliff.delta(WEIGHT ~ SEX, data = data.nouni, conf.level = .95, magnitude = TRUE, method = "Cliff's Delta")
+```
+
+#visualization
+```{r}
+library(ggplot2)
+library(plyr)
+```
+
+```{r}
+# creating this function will allow you to generate summary stats needed for visualization - mean scores, standard error, etc. It's super useful - keep it handy, you'll see it a lot.
+
+summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
+                      conf.interval=.95, .drop=TRUE) {
+  library(plyr)
+  
+  # New version of length which can handle NA's: if na.rm==T, don't count them
+  length2 <- function (x, na.rm=FALSE) {
+    if (na.rm) sum(!is.na(x))
+    else       length(x)
+  }
+  
+  # This does the summary. For each group's data frame, return a vector with
+  # N, mean, and sd
+  datac <- ddply(data, groupvars, .drop=.drop,
+                 .fun = function(xx, col) {
+                   c(N    = length2(xx[[col]], na.rm=na.rm),
+                     mean = mean   (xx[[col]], na.rm=na.rm),
+                     sd   = sd     (xx[[col]], na.rm=na.rm)
+                   )
+                 },
+                 measurevar
+  )
+  
+  # Rename the "mean" column    
+  datac <- rename(datac, c("mean" = measurevar))
+  
+  datac$se <- datac$sd / sqrt(datac$N)  # Calculate standard error of the mean
+  
+  # Confidence interval multiplier for standard error
+  # Calculate t-statistic for confidence interval: 
+  # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+  ciMult <- qt(conf.interval/2 + .5, datac$N-1)
+  datac$ci <- datac$se * ciMult
+  
+  return(datac)
+}
+```
+
+```{r}
+# Saving the summary data to call when putting in the ggplot2 code for the graph (for geom_errorbar).
+sumdat <- summarySE(down, measurevar="WEIGHT", groupvars=c("SEX"))
+```
+
+
+```{r}
+# creation of the bar graph - including specifications such as the color, title, addition of error bars, etc. 
+bar1 <- ggplot(sumdat, aes(x = SEX, y = WEIGHT)) +
+  geom_bar(stat='identity', fill = 'dodgerblue3') +
+  theme_minimal() +
+  geom_errorbar(aes(ymin=WEIGHT-se, ymax=WEIGHT+se), width = .1)
+
+bar1 + ggtitle('Weight by Sex')
+
+```
