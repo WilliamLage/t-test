@@ -1,0 +1,167 @@
+---
+title: "Dependent T-test"
+author: "William W. Lage"
+date: "8/14/2020"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#setup
+```{r library}
+library(jmv) #contains our t-test, descriptives, and non-core functions
+library(data.table) #for optional melt function
+```
+
+```{r import data}
+Wave1 <- read.csv("Wave1.csv")
+Wave4 <- read.csv("wave4.csv")
+```
+
+```{r combine the dataframes}
+#For those familiar with SQL, this is the equivalent of joining tables but using an all join rather than a left or right join. Both are however available in this function by replacing "all" with "all.x" (left) or "all.y" (right). 
+
+#for more information enter ??data.table::merge into the console
+
+data<- merge(Wave1,Wave4[,c("AID","WEIGHT")], by="AID", all = TRUE)
+```
+
+```{r recoding and renaming}
+#renaming columns using their index positions
+names(data)[3:4] <- c("WEIGHT1", "WEIGHT4")
+
+#Like the independent t-test demo we have some values which the codebook identifies as non-values
+data$WEIGHT1[data$WEIGHT1=="996"]<-"NA"
+data$WEIGHT1[data$WEIGHT1=="998"]<-"NA"
+data$WEIGHT1[data$WEIGHT1=="999"]<-"NA"
+data$WEIGHT4[data$WEIGHT4=="996"]<-"NA"
+data$WEIGHT4[data$WEIGHT4=="998"]<-"NA"
+#convert the two columns back to integers coercing the NA's into non-string values
+data$WEIGHT1 <- as.integer(data$WEIGHT1)
+data$WEIGHT4 <- as.integer(data$WEIGHT4)
+
+#Revalue SEX so it has interpretable meaning
+data$SEX[data$SEX=="1"]<-"Male"
+data$SEX[data$SEX=="2"]<-"Female"
+data$SEX[data$SEX=="6"]<-"NA"
+#Normally we wait for later to remove NA's but removing the factor level NA here prevents R from treating it as a factor with 3 levels.
+data <- subset(data, SEX != "NA")
+
+#let's convert these strings into factor levels
+data$SEX <- as.factor(data$SEX)
+
+#and of course, check your work
+str(data)
+```
+#paired samples and descriptives
+```{r cleaning}
+data.noNA <- na.omit(data)
+```
+
+```{r initial descriptives}
+desc <- descriptives(data.noNA, vars = c('WEIGHT1', 'WEIGHT4'), hist = TRUE, sd = TRUE, se = TRUE, skew = TRUE, kurt = TRUE)
+desc
+```
+
+```{r normality of difference}
+data.noNA$diff <- (data.noNA$WEIGHT4 - data.noNA$WEIGHT1)
+
+desc <- descriptives(data.noNA, vars = c('diff'), hist = TRUE, sd = TRUE, se = TRUE, skew = TRUE, kurt = TRUE)
+desc
+```
+
+```{r paired samples T-test}
+ttestPS(data = data.noNA, pairs = list(list(i1='WEIGHT1', i2='WEIGHT4')), effectSize = TRUE, ci = TRUE, desc = TRUE)
+```
+#visualization 1 - bar graphs showing mean weight at each point
+```{r visual library}
+library(ggplot2) #for visuals
+library(plyr)    #for error bars and summary stats
+```
+
+```{r summary function}
+# creating this function will allow you to generate summary stats needed for visualization - mean scores, standard error, etc.
+
+summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
+                      conf.interval=.95, .drop=TRUE) {
+  library(plyr)
+  
+  # New version of length which can handle NA's: if na.rm==T, don't count them
+  length2 <- function (x, na.rm=FALSE) {
+    if (na.rm) sum(!is.na(x))
+    else       length(x)
+  }
+  
+  # This does the summary. For each group's data frame, return a vector with
+  # N, mean, and sd
+  datac <- ddply(data, groupvars, .drop=.drop,
+                 .fun = function(xx, col) {
+                   c(N    = length2(xx[[col]], na.rm=na.rm),
+                     mean = mean   (xx[[col]], na.rm=na.rm),
+                     sd   = sd     (xx[[col]], na.rm=na.rm)
+                   )
+                 },
+                 measurevar
+  )
+  
+  # Rename the "mean" column    
+  datac <- rename(datac, c("mean" = measurevar))
+  
+  datac$se <- datac$sd / sqrt(datac$N)  # Calculate standard error of the mean
+  
+  # Confidence interval multiplier for standard error
+  # Calculate t-statistic for confidence interval: 
+  # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+  ciMult <- qt(conf.interval/2 + .5, datac$N-1)
+  datac$ci <- datac$se * ciMult
+  
+  return(datac)
+}
+```
+
+```{r wide to long}
+#the visualization here works better if your data is in long form with different time points represented by different labels in a column. So this is how you shift your data to make multiple columns into one.
+
+data.long <- reshape(data = data.noNA,                      #data set
+                        idvar='AID',                        #id variable
+                        varying=c('WEIGHT1','WEIGHT4'),     #repeated measures variables
+                        times=c(1,4),                       #time metric/occasion variable
+                        v.names='WEIGHT',                   #name of consolidated column
+                        direction='long')                   #long or wide depending on needs
+
+#alternatively, the melt function is less code intense, but I find reshape to be more versatile
+#data.l = melt(data = data.noNA, id.vars = c("AID"), measure.vars = c("WEIGHT1", "WEIGHT4"))
+
+# Saving the summary data to call when putting in the ggplot2 code for the graph (for geom_errorbar).
+sumdat3 <- summarySE(data.long, measurevar="WEIGHT", groupvars=c("time"))
+```
+
+
+```{r bar graph}
+# creation of the bar graph - including specifications such as the color (#GoDodgers), title, addition of error bars, etc. 
+bar3 <- ggplot(sumdat3, aes(x = time, y = WEIGHT)) +
+  geom_bar(stat='identity', fill = 'forestgreen') +
+  theme_minimal() +
+  geom_errorbar(aes(ymin=WEIGHT-se, ymax=WEIGHT+se), width = .1)
+
+bar3 + ggtitle('Weight at Different Waves')
+
+```
+
+#visualization 2: graph of linear change for participants
+```{r linear graph}
+#for clarity you can subset the data using the function below:
+wght_long1 <- data.long[which(data.long$AID > 55000000 & data.long$AID < 60000000), ]
+
+#creating a plot and assigning it to an object 
+plot_obs <- ggplot(data=wght_long1,                        #new subset, or full with data.long
+                   aes(x=time, y=WEIGHT, group=AID)) +    #calling variables
+                   geom_line() +                          #adding lines to plot
+                   theme_bw() +                           #changing style/background
+                   scale_x_continuous(breaks = c(1,2,3,4,5), name = "wave") +   #creating breaks in the x-axis and labeling the x-axis
+                   scale_y_continuous(breaks = c(50,100,150,200,250,300,350,400), name = "Weight") #creating breaks in the y-axis and labeling the y-axis
+
+#printing the object (plot)
+print(plot_obs)
+```
