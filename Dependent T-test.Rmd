@@ -65,6 +65,7 @@ data.noUni <- data.noNA[!abs(scale(data.noNA$WEIGHT1)) > 3, ]
 data.noUni <- data.noUni[!abs(scale(data.noUni$WEIGHT4)) > 3, ]
 ```
 
+#final descriptives and t-test
 ```{r normality of difference}
 data.noUni$diff <- (data.noUni$WEIGHT4 - data.noUni$WEIGHT1)
 
@@ -75,6 +76,7 @@ desc
 ```{r paired samples T-test}
 ttestPS(data = data.noUni, pairs = list(list(i1='WEIGHT1', i2='WEIGHT4')), effectSize = TRUE, ci = TRUE, desc = TRUE)
 ```
+
 #visualization 1 - bar graphs showing mean weight at each point
 ```{r visual library}
 library(ggplot2) #for visuals
