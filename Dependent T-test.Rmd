@@ -41,38 +41,39 @@ data$WEIGHT4[data$WEIGHT4=="998"]<-"NA"
 data$WEIGHT1 <- as.integer(data$WEIGHT1)
 data$WEIGHT4 <- as.integer(data$WEIGHT4)
 
-#Revalue SEX so it has interpretable meaning
-data$SEX[data$SEX=="1"]<-"Male"
-data$SEX[data$SEX=="2"]<-"Female"
-data$SEX[data$SEX=="6"]<-"NA"
-#Normally we wait for later to remove NA's but removing the factor level NA here prevents R from treating it as a factor with 3 levels.
-data <- subset(data, SEX != "NA")
-
-#let's convert these strings into factor levels
-data$SEX <- as.factor(data$SEX)
+#remove the SEX column because it is not relevant to our hypothesis
+data2 <- data[, -c(2)]
 
 #and of course, check your work
-str(data)
+str(data2)
 ```
-#paired samples and descriptives
-```{r cleaning}
-data.noNA <- na.omit(data)
-```
-
+#cleaning and initial descriptives
 ```{r initial descriptives}
-desc <- descriptives(data.noNA, vars = c('WEIGHT1', 'WEIGHT4'), hist = TRUE, sd = TRUE, se = TRUE, skew = TRUE, kurt = TRUE)
+desc <- descriptives(data2, vars = c('WEIGHT1', 'WEIGHT4'), hist = TRUE, sd = TRUE, se = TRUE, skew = TRUE, kurt = TRUE)
 desc
+```
+```{r cleaning}
+#remove NA's
+data.noNA <- na.omit(data2)
+
+#While not a statistical assumption for dependent t-test, we know some of the values are off so we're going to remove them
+##identify univariate outliers
+data.noNA[abs(scale(data.noNA$WEIGHT1)) > 3, ]
+data.noNA[abs(scale(data.noNA$WEIGHT4)) > 3, ]
+##remove the univeriate outliers
+data.noUni <- data.noNA[!abs(scale(data.noNA$WEIGHT1)) > 3, ]
+data.noUni <- data.noUni[!abs(scale(data.noUni$WEIGHT4)) > 3, ]
 ```
 
 ```{r normality of difference}
-data.noNA$diff <- (data.noNA$WEIGHT4 - data.noNA$WEIGHT1)
+data.noUni$diff <- (data.noUni$WEIGHT4 - data.noUni$WEIGHT1)
 
-desc <- descriptives(data.noNA, vars = c('diff'), hist = TRUE, sd = TRUE, se = TRUE, skew = TRUE, kurt = TRUE)
+desc <- descriptives(data.noUni, vars = c('diff'), hist = TRUE, sd = TRUE, se = TRUE, skew = TRUE, kurt = TRUE)
 desc
 ```
 
 ```{r paired samples T-test}
-ttestPS(data = data.noNA, pairs = list(list(i1='WEIGHT1', i2='WEIGHT4')), effectSize = TRUE, ci = TRUE, desc = TRUE)
+ttestPS(data = data.noUni, pairs = list(list(i1='WEIGHT1', i2='WEIGHT4')), effectSize = TRUE, ci = TRUE, desc = TRUE)
 ```
 #visualization 1 - bar graphs showing mean weight at each point
 ```{r visual library}
@@ -123,7 +124,7 @@ summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
 ```{r wide to long}
 #the visualization here works better if your data is in long form with different time points represented by different labels in a column. So this is how you shift your data to make multiple columns into one.
 
-data.long <- reshape(data = data.noNA,                      #data set
+data.long <- reshape(data = data.noUni,                      #data set
                         idvar='AID',                        #id variable
                         varying=c('WEIGHT1','WEIGHT4'),     #repeated measures variables
                         times=c(1,4),                       #time metric/occasion variable
@@ -139,7 +140,7 @@ sumdat3 <- summarySE(data.long, measurevar="WEIGHT", groupvars=c("time"))
 
 
 ```{r bar graph}
-# creation of the bar graph - including specifications such as the color (#GoDodgers), title, addition of error bars, etc. 
+# creation of the bar graph - including specifications such as the color, title, addition of error bars, etc. 
 bar3 <- ggplot(sumdat3, aes(x = time, y = WEIGHT)) +
   geom_bar(stat='identity', fill = 'forestgreen') +
   theme_minimal() +
